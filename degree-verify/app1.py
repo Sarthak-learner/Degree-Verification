@@ -37,7 +37,9 @@ def boot():
     print(f"✅ Contract: {rx.contractAddress}")
     return w3, ct, w3.eth.accounts[0]
 
-W3, CONTRACT, OWNER = boot()
+W3 = None
+CONTRACT = None
+OWNER = None
 
 def pdf_hash(f):
     h = hashlib.sha256()
