@@ -6,6 +6,7 @@ Credentials:
 """
 import hashlib, secrets
 from flask import Flask, request, jsonify, render_template_string, session, redirect
+from ai_monitor import detector   # ← AI anomaly detection
 
 app = Flask(__name__)
 app.secret_key = "degreechainFY2024"
@@ -37,9 +38,7 @@ def boot():
     print(f"✅ Contract: {rx.contractAddress}")
     return w3, ct, w3.eth.accounts[0]
 
-W3 = None
-CONTRACT = None
-OWNER = None
+W3, CONTRACT, OWNER = boot()
 
 def pdf_hash(f):
     h = hashlib.sha256()
@@ -414,9 +413,49 @@ UNI_PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
     </div>
   </div>
 </div>
-""" + _JS + """</body></html>"""
-
-COMP_PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+  <!-- AI Monitoring Panel -->
+  <div class="card ca" style="margin-top:16px;animation-delay:.35s">
+    <div class="c-num">AI LAYER — ISOLATION FOREST</div>
+    <div class="c-icon">🤖</div>
+    <div class="ct">AI Anomaly Monitor</div>
+    <div class="cd">Unsupervised ML watches every verification attempt and flags suspicious patterns — bots, forgery attempts, off-hours spikes.</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+      <div style="background:rgba(0,212,170,.06);border:.5px solid rgba(0,212,170,.15);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:20px;font-weight:800;color:#00d4aa" id="ai-total">—</div>
+        <div style="font-size:10px;color:var(--m);font-family:'DM Mono',monospace;margin-top:3px">Total Verifications</div>
+      </div>
+      <div style="background:rgba(251,191,36,.06);border:.5px solid rgba(251,191,36,.15);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:20px;font-weight:800;color:#fbbf24" id="ai-alerts">—</div>
+        <div style="font-size:10px;color:var(--m);font-family:'DM Mono',monospace;margin-top:3px">Anomalies Flagged</div>
+      </div>
+      <div style="background:rgba(0,153,255,.06);border:.5px solid rgba(0,153,255,.15);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#4d9fff" id="ai-status">—</div>
+        <div style="font-size:10px;color:var(--m);font-family:'DM Mono',monospace;margin-top:3px">Model Status</div>
+      </div>
+    </div>
+    <div id="ai-log" style="font-size:11px;font-family:'DM Mono',monospace;color:var(--m);min-height:20px;line-height:1.8"></div>
+    <button class="btn btn-a" style="margin-top:12px" onclick="loadAI()"><span class="bl">Refresh AI Stats ↻</span><span class="sp"></span></button>
+  </div>
+</div>
+<script>
+async function loadAI(){
+  try{
+    const r=await fetch('/ai/stats');const d=await r.json();
+    document.getElementById('ai-total').textContent=d.total_verifications;
+    document.getElementById('ai-alerts').textContent=d.total_alerts;
+    document.getElementById('ai-status').textContent=d.model_trained?'✅ Trained':'⏳ Collecting data ('+d.training_samples+'/'+d.min_for_training+')';
+    const log=document.getElementById('ai-log');
+    if(d.recent_alerts&&d.recent_alerts.length){
+      log.innerHTML='<div style="color:#fbbf24;margin-bottom:6px;font-weight:700">⚠ Recent Alerts:</div>'+
+        d.recent_alerts.map(a=>`<div style="padding:4px 0;border-bottom:.5px solid rgba(255,255,255,.05)">🚨 ${a.time} · ${a.ip} · ${a.reason} · Risk: ${a.risk_score}%</div>`).join('');
+    } else {
+      log.innerHTML='<span style="color:#00d4aa">✅ No anomalies detected — all activity appears normal.</span>';
+    }
+  }catch(e){document.getElementById('ai-log').textContent='Could not load AI stats: '+e.message}
+}
+loadAI();
+</script>
+""" + _JS + """</body></html>""" = """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <title>Company Dashboard — DegreeChain</title>""" + _CSS + """
 </head><body>
 <canvas id="bg-canvas"></canvas>
@@ -564,9 +603,15 @@ def verify():
     if "pdf" not in request.files: return jsonify(error="Send pdf"), 400
     h = pdf_hash(request.files["pdf"])
     valid, rev = CONTRACT.functions.verifyDegree(h).call()
-    if rev:   return jsonify(status="revoked",  hash=h.hex(), valid=False)
-    if valid: return jsonify(status="verified", hash=h.hex(), valid=True)
-    return    jsonify(status="invalid",  hash=h.hex(), valid=False), 404
+
+    # ── AI: log this verification and check for anomaly ──
+    result_str = "verified" if valid else ("revoked" if rev else "invalid")
+    ip         = request.remote_addr or "unknown"
+    ai_result  = detector.log_verification(ip, result_str)
+
+    if rev:   return jsonify(status="revoked",  hash=h.hex(), valid=False,  ai=ai_result)
+    if valid: return jsonify(status="verified", hash=h.hex(), valid=True,   ai=ai_result)
+    return    jsonify(status="invalid",  hash=h.hex(), valid=False, ai=ai_result), 404
 
 @app.route("/revoke", methods=["POST"])
 def revoke():
@@ -580,9 +625,11 @@ def revoke():
     except Exception as e:
         return jsonify(error=str(e)), 400
 
-import os
+@app.route("/ai/stats")
+def ai_stats():
+    if session.get("role") != "university": return jsonify(error="Unauthorised"), 403
+    return jsonify(detector.get_stats())
 
 if __name__ == "__main__":
-    print("\n🎓 DegreeChain Live\n")
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    print("\n🎓  Open http://127.0.0.1:5000\n")
+    app.run(port=5000, debug=False)
