@@ -632,6 +632,8 @@ def ai_stats():
     if session.get("role") != "university": return jsonify(error="Unauthorised"), 403
     return jsonify(detector.get_stats())
 
+import os
+
 if __name__ == "__main__":
-    print("\n🎓  Open http://127.0.0.1:5000\n")
-    app.run(port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
