@@ -2,3 +2,5 @@ flask
 web3
 py-solc-x
 requests
+scikit-learn
+numpy
